@@ -3,6 +3,8 @@ mod audio_feedback;
 pub mod audio_toolkit;
 mod clipboard;
 mod commands;
+#[cfg(target_os = "linux")]
+mod gnome_keybinding;
 mod helpers;
 mod llm_client;
 mod managers;

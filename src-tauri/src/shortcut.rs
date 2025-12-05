@@ -1,4 +1,4 @@
-use log::{error, warn};
+use log::{error, info, warn};
 use serde::Serialize;
 use specta::Type;
 use std::sync::Arc;
@@ -13,6 +13,9 @@ use crate::settings::{
     self, get_settings, ClipboardHandling, LLMPrompt, OverlayPosition, PasteMethod, SoundTheme,
 };
 use crate::ManagedToggleState;
+
+#[cfg(target_os = "linux")]
+use crate::gnome_keybinding;
 
 pub fn init_shortcuts(app: &AppHandle) {
     let default_bindings = settings::get_default_settings().bindings;
@@ -813,7 +816,26 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
     };
 
     // Prevent duplicate registrations that would silently shadow one another
-    if app.global_shortcut().is_registered(shortcut) {
+    let tauri_shortcut_already_registered = app.global_shortcut().is_registered(shortcut);
+
+    // On Linux/GNOME, set up a GNOME keybinding as fallback (especially useful for Wayland)
+    // This uses the SIGUSR2 signal mechanism which is already set up
+    #[cfg(target_os = "linux")]
+    if binding.id == "transcribe" {
+        if let Err(e) = gnome_keybinding::setup_gnome_keybinding(&binding.current_binding) {
+            // Log but don't fail - GNOME keybinding is a fallback, not required
+            warn!("Failed to set up GNOME keybinding fallback: {}", e);
+        } else {
+            info!(
+                "GNOME keybinding fallback set up for shortcut '{}'",
+                binding.current_binding
+            );
+        }
+    }
+
+    // If shortcut is already registered in Tauri, return error
+    // (but GNOME keybinding is already set up above as fallback)
+    if tauri_shortcut_already_registered {
         let error_msg = format!("Shortcut '{}' is already in use", binding.current_binding);
         warn!("_register_shortcut duplicate error: {}", error_msg);
         return Err(error_msg);
