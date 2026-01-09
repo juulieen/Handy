@@ -1,8 +1,8 @@
 use crate::audio_feedback;
-use crate::audio_toolkit::audio::{list_input_devices, list_output_devices};
+use crate::audio_toolkit::audio::{detect_best_microphone, list_input_devices, list_output_devices};
 use crate::managers::audio::{AudioRecordingManager, MicrophoneMode};
 use crate::settings::{get_settings, write_settings};
-use log::warn;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
@@ -192,4 +192,98 @@ pub fn get_clamshell_microphone(app: AppHandle) -> Result<String, String> {
     Ok(settings
         .clamshell_microphone
         .unwrap_or_else(|| "default".to_string()))
+}
+
+/// Result of microphone auto-detection
+#[derive(Serialize, Type)]
+pub struct MicrophoneDetectionResult {
+    /// The name of the detected microphone, if any
+    pub detected_microphone: Option<String>,
+    /// The amplitude level of the detected microphone
+    pub amplitude: f32,
+    /// Whether the detected microphone was automatically set as selected
+    pub auto_selected: bool,
+    /// Human-readable message about the detection result
+    pub message: String,
+}
+
+/// Detect the best available microphone by testing audio levels
+/// This briefly records from each microphone to measure ambient noise/audio levels
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_detect_microphone(app: AppHandle) -> Result<MicrophoneDetectionResult, String> {
+    info!("Starting microphone auto-detection from UI");
+
+    // Check if we're on PipeWire (Linux only)
+    #[cfg(target_os = "linux")]
+    let is_pipewire = crate::audio_toolkit::pipewire::is_pipewire_available();
+    #[cfg(not(target_os = "linux"))]
+    let is_pipewire = false;
+
+    // Run the detection in a blocking task since it involves audio I/O
+    let result = tokio::task::spawn_blocking(|| detect_best_microphone())
+        .await
+        .map_err(|e| format!("Detection task failed: {}", e))?
+        .map_err(|e| format!("Detection failed: {}", e))?;
+
+    match result {
+        Some(best) => {
+            let mic_name = best.name.clone();
+            let amplitude = best.max_amplitude;
+
+            // On PipeWire, the device selection is done at the system level via wpctl
+            // So we don't need to update the app's selected_microphone setting
+            // On other systems, we update the app settings
+            if !is_pipewire {
+                // Auto-select the detected microphone in app settings
+                let mut settings = get_settings(&app);
+                settings.selected_microphone = Some(mic_name.clone());
+                write_settings(&app, settings);
+
+                // Update the audio manager to use the new device
+                let rm = app.state::<Arc<AudioRecordingManager>>();
+                if let Err(e) = rm.update_selected_device() {
+                    warn!("Failed to update audio manager with detected device: {}", e);
+                }
+            } else {
+                info!("PipeWire: System default source updated via wpctl, app settings unchanged");
+            }
+
+            info!(
+                "Auto-detected microphone: {} (amplitude: {:.6}){}",
+                mic_name, amplitude,
+                if is_pipewire { " [PipeWire]" } else { "" }
+            );
+
+            let message = if is_pipewire {
+                format!(
+                    "Set system default to '{}' (signal: {:.1}%)",
+                    mic_name,
+                    amplitude * 100.0
+                )
+            } else {
+                format!(
+                    "Detected and selected '{}' (signal: {:.1}%)",
+                    mic_name,
+                    amplitude * 100.0
+                )
+            };
+
+            Ok(MicrophoneDetectionResult {
+                detected_microphone: Some(mic_name),
+                amplitude,
+                auto_selected: true,
+                message,
+            })
+        }
+        None => {
+            warn!("No suitable microphone detected");
+            Ok(MicrophoneDetectionResult {
+                detected_microphone: None,
+                amplitude: 0.0,
+                auto_selected: false,
+                message: "No microphone with sufficient audio level detected. Please check your microphone connections and try again.".to_string(),
+            })
+        }
+    }
 }

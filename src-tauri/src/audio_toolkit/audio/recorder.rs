@@ -254,6 +254,8 @@ fn run_consumer(
 
     let mut processed_samples = Vec::<f32>::new();
     let mut recording = false;
+    let mut total_raw_samples: usize = 0;
+    let mut max_sample_value: f32 = 0.0;
 
     // ---------- spectrum visualisation setup ---------------------------- //
     const BUCKETS: usize = 16;
@@ -293,6 +295,17 @@ fn run_consumer(
             Err(_) => break, // stream closed
         };
 
+        // Track raw sample statistics when recording
+        if recording {
+            total_raw_samples += raw.len();
+            for &sample in &raw {
+                let abs_val = sample.abs();
+                if abs_val > max_sample_value {
+                    max_sample_value = abs_val;
+                }
+            }
+        }
+
         // ---------- spectrum processing ---------------------------------- //
         if let Some(buckets) = visualizer.feed(&raw) {
             if let Some(cb) = &level_cb {
@@ -323,6 +336,17 @@ fn run_consumer(
                         // we still want to process the last few frames
                         handle_frame(frame, true, &vad, &mut processed_samples)
                     });
+
+                    log::debug!(
+                        "Recording stopped: raw_samples={}, max_amplitude={:.4}, vad_passed_samples={}",
+                        total_raw_samples,
+                        max_sample_value,
+                        processed_samples.len()
+                    );
+
+                    // Reset tracking
+                    total_raw_samples = 0;
+                    max_sample_value = 0.0;
 
                     let _ = reply_tx.send(std::mem::take(&mut processed_samples));
                 }

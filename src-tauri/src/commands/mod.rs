@@ -5,6 +5,8 @@ pub mod transcription;
 
 use crate::settings::{get_settings, write_settings, AppSettings, LogLevel};
 use crate::utils::cancel_current_operation;
+use serde::{Deserialize, Serialize};
+use specta::Type;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -114,4 +116,38 @@ pub fn open_app_data_dir(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Failed to open app data directory: {}", e))?;
 
     Ok(())
+}
+
+/// Information about the Linux environment (GNOME, Wayland, etc.)
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct LinuxEnvironmentInfo {
+    /// True if running on Wayland
+    pub is_wayland: bool,
+    /// True if running on GNOME Wayland (where auto-typing doesn't work)
+    pub is_gnome_wayland: bool,
+}
+
+#[specta::specta]
+#[tauri::command]
+pub fn get_linux_environment_info() -> LinuxEnvironmentInfo {
+    #[cfg(target_os = "linux")]
+    {
+        use crate::utils::is_wayland;
+
+        let is_wayland_env = is_wayland();
+        let is_gnome_wayland = crate::settings::is_gnome_wayland();
+
+        LinuxEnvironmentInfo {
+            is_wayland: is_wayland_env,
+            is_gnome_wayland,
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        LinuxEnvironmentInfo {
+            is_wayland: false,
+            is_gnome_wayland: false,
+        }
+    }
 }

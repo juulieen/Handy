@@ -1,5 +1,7 @@
 pub mod audio;
 pub mod constants;
+#[cfg(target_os = "linux")]
+pub mod pipewire;
 pub mod text;
 pub mod utils;
 pub mod vad;

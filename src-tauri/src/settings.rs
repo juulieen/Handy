@@ -169,6 +169,47 @@ impl Default for ClipboardHandling {
     }
 }
 
+/// Check if running on GNOME Wayland (where auto-typing doesn't work)
+#[cfg(target_os = "linux")]
+pub fn is_gnome_wayland() -> bool {
+    use crate::utils::is_wayland;
+
+    if !is_wayland() {
+        return false;
+    }
+
+    // Check for GNOME-specific environment variables
+    let xdg_desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    let gnome_desktop = std::env::var("GNOME_DESKTOP_SESSION_ID").ok().is_some();
+
+    xdg_desktop.to_lowercase().contains("gnome") || gnome_desktop
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn is_gnome_wayland() -> bool {
+    false
+}
+
+/// Get the recommended paste method for the current environment
+pub fn get_recommended_paste_method() -> PasteMethod {
+    #[cfg(target_os = "linux")]
+    if is_gnome_wayland() {
+        return PasteMethod::None;
+    }
+
+    PasteMethod::default()
+}
+
+/// Get the recommended clipboard handling for the current environment
+pub fn get_recommended_clipboard_handling() -> ClipboardHandling {
+    #[cfg(target_os = "linux")]
+    if is_gnome_wayland() {
+        return ClipboardHandling::CopyToClipboard;
+    }
+
+    ClipboardHandling::default()
+}
+
 impl ModelUnloadTimeout {
     pub fn to_minutes(self) -> Option<u64> {
         match self {
@@ -475,8 +516,8 @@ pub fn get_default_settings() -> AppSettings {
         word_correction_threshold: default_word_correction_threshold(),
         history_limit: default_history_limit(),
         recording_retention_period: default_recording_retention_period(),
-        paste_method: PasteMethod::default(),
-        clipboard_handling: ClipboardHandling::default(),
+        paste_method: get_recommended_paste_method(),
+        clipboard_handling: get_recommended_clipboard_handling(),
         post_process_enabled: default_post_process_enabled(),
         post_process_provider_id: default_post_process_provider_id(),
         post_process_providers: default_post_process_providers(),

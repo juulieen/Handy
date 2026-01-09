@@ -335,6 +335,9 @@ async openAppDataDir() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getLinuxEnvironmentInfo() : Promise<LinuxEnvironmentInfo> {
+    return await TAURI_INVOKE("get_linux_environment_info");
+},
 async getAvailableModels() : Promise<Result<ModelInfo[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_available_models") };
@@ -517,6 +520,18 @@ async getClamshellMicrophone() : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Detect the best available microphone by testing audio levels
+ * This briefly records from each microphone to measure ambient noise/audio levels
+ */
+async autoDetectMicrophone() : Promise<Result<MicrophoneDetectionResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("auto_detect_microphone") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async setModelUnloadTimeout(timeout: ModelUnloadTimeout) : Promise<void> {
     await TAURI_INVOKE("set_model_unload_timeout", { timeout });
 },
@@ -585,10 +600,8 @@ async updateRecordingRetentionPeriod(period: string) : Promise<Result<null, stri
 }
 },
 /**
- * Checks if the Mac is a laptop by detecting battery presence
- * 
- * This uses pmset to check for battery information.
- * Returns true if a battery is detected (laptop), false otherwise (desktop)
+ * Stub implementation for non-macOS platforms
+ * Always returns false since laptop detection is macOS-specific
  */
 async isLaptop() : Promise<Result<boolean, string>> {
     try {
@@ -618,7 +631,39 @@ export type CustomSounds = { start: boolean; stop: boolean }
 export type EngineType = "Whisper" | "Parakeet"
 export type HistoryEntry = { id: string; file_name: string; timestamp: string; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null }
 export type LLMPrompt = { id: string; name: string; prompt: string }
+/**
+ * Information about the Linux environment (GNOME, Wayland, etc.)
+ */
+export type LinuxEnvironmentInfo = { 
+/**
+ * True if running on Wayland
+ */
+is_wayland: boolean; 
+/**
+ * True if running on GNOME Wayland (where auto-typing doesn't work)
+ */
+is_gnome_wayland: boolean }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+/**
+ * Result of microphone auto-detection
+ */
+export type MicrophoneDetectionResult = { 
+/**
+ * The name of the detected microphone, if any
+ */
+detected_microphone: string | null; 
+/**
+ * The amplitude level of the detected microphone
+ */
+amplitude: number; 
+/**
+ * Whether the detected microphone was automatically set as selected
+ */
+auto_selected: boolean; 
+/**
+ * Human-readable message about the detection result
+ */
+message: string }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; url: string | null; size_mb: string; is_downloaded: boolean; is_downloading: boolean; partial_size: string; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_5"

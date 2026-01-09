@@ -3,7 +3,7 @@ use enigo::Enigo;
 use enigo::Key;
 use enigo::Keyboard;
 use enigo::Settings;
-use log::info;
+use log::{debug, info, warn};
 use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -84,12 +84,58 @@ fn send_paste_shift_insert() -> Result<(), String> {
 /// Pastes text directly using the enigo text method.
 /// This tries to use system input methods if possible, otherwise simulates keystrokes one by one.
 fn paste_via_direct_input(text: &str) -> Result<(), String> {
+    // On Wayland, try to use wtype for direct text input
+    #[cfg(target_os = "linux")]
+    if try_wayland_direct_input(text)? {
+        return Ok(());
+    }
+
     let mut enigo = Enigo::new(&Settings::default())
         .map_err(|e| format!("Failed to initialize Enigo: {}", e))?;
 
     enigo
         .text(text)
         .map_err(|e| format!("Failed to send text directly: {}", e))?;
+
+    Ok(())
+}
+
+/// Attempts to type text directly using Wayland-specific tools (`wtype`).
+/// Returns `Ok(true)` if a Wayland tool handled the input, `Ok(false)` if not applicable or failed.
+#[cfg(target_os = "linux")]
+fn try_wayland_direct_input(text: &str) -> Result<bool, String> {
+    if is_wayland() {
+        // Try wtype (works on wlroots-based compositors like Sway, Hyprland)
+        // Note: Does NOT work on GNOME Wayland (no virtual keyboard protocol support)
+        if is_wtype_available() {
+            debug!("Attempting to type text via wtype");
+            match type_via_wtype(text) {
+                Ok(()) => {
+                    debug!("wtype succeeded");
+                    return Ok(true);
+                }
+                Err(e) => {
+                    warn!("wtype failed (expected on GNOME): {}", e);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Type text directly using wtype (Wayland)
+#[cfg(target_os = "linux")]
+fn type_via_wtype(text: &str) -> Result<(), String> {
+    let output = Command::new("wtype")
+        .arg("--")
+        .arg(text)
+        .output()
+        .map_err(|e| format!("Failed to execute wtype: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("wtype failed: {}", stderr));
+    }
 
     Ok(())
 }
@@ -149,17 +195,37 @@ fn paste_via_clipboard_shift_insert(text: &str, app_handle: &AppHandle) -> Resul
 }
 
 /// Attempts to paste using Wayland-specific tools (`wtype` or `dotool`).
-/// Returns `Ok(true)` if a Wayland tool handled the paste, `Ok(false)` if not applicable,
-/// or `Err` on failure from the underlying tool.
+/// Returns `Ok(true)` if a Wayland tool handled the paste, `Ok(false)` if not applicable or failed.
 #[cfg(target_os = "linux")]
 fn try_wayland_send_paste(paste_method: &PasteMethod) -> Result<bool, String> {
     if is_wayland() {
+        // Try wtype (works on wlroots-based compositors like Sway, Hyprland)
+        // Note: Does NOT work on GNOME Wayland (no virtual keyboard protocol support)
         if is_wtype_available() {
-            send_paste_via_wtype(paste_method)?;
-            return Ok(true);
-        } else if is_dotool_available() {
-            send_paste_via_dotool(paste_method)?;
-            return Ok(true);
+            debug!("Attempting to send paste via wtype");
+            match send_paste_via_wtype(paste_method) {
+                Ok(()) => {
+                    debug!("wtype paste succeeded");
+                    return Ok(true);
+                }
+                Err(e) => {
+                    warn!("wtype paste failed (expected on GNOME): {}", e);
+                }
+            }
+        }
+
+        // Try dotool as fallback
+        if is_dotool_available() {
+            debug!("Attempting to send paste via dotool");
+            match send_paste_via_dotool(paste_method) {
+                Ok(()) => {
+                    debug!("dotool paste succeeded");
+                    return Ok(true);
+                }
+                Err(e) => {
+                    warn!("dotool paste failed: {}", e);
+                }
+            }
         }
     }
 
